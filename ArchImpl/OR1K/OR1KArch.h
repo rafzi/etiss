@@ -6,7 +6,7 @@
 
         Copyright 2018 Infineon Technologies AG
 
-        This file is part of ETISS tool, see <https://gitlab.lrz.de/de-tum-ei-eda-open/etiss>.
+        This file is part of ETISS tool, see <https://github.com/tum-ei-eda/etiss>.
 
         The initial version of this software has been created with the funding support by the German Federal
         Ministry of Education and Research (BMBF) in the project EffektiV under grant 01IS13022.
@@ -112,21 +112,6 @@ class OR1KArch : public etiss::CPUArch
     OR1KGDBCore gdbcore_;
 
   public:
-    bool perfopt_noRangeException_; ///< performance option: if true then no range
-                                    ///< exception shall be thrown (speedup of
-                                    ///< additions etc.) @see etiss::CPUArch *
-                                    ///< OR1KArch_createCPUArch(unsigned
-                                    ///< index,std::map<std::string,std::string>
-                                    ///< options)
-    bool opt_returnjump_;           ///< if true then isjump will allways be false and jumps
-                                    ///< will be implemented with a return statement @see
-                                    ///< etiss::CPUArch * OR1KArch_createCPUArch(unsigned
-                                    ///< index,std::map<std::string,std::string> options)
-    bool opt_hostendianness;        ///< if true then no byte swapping will be done.
-                                    ///< requires the endianness of instruction/data in
-                                    ///< the memory to match host endianness @see
-                                    ///< etiss::CPUArch * OR1KArch_createCPUArch(unsigned
-                                    ///< index,std::map<std::string,std::string> options)
     bool ignore_sr_iee;             ///< ignore sr iee flag
 };
 

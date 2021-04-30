@@ -6,7 +6,7 @@
 
         Copyright 2018 Infineon Technologies AG
 
-        This file is part of ETISS tool, see <https://gitlab.lrz.de/de-tum-ei-eda-open/etiss>.
+        This file is part of ETISS tool, see <https://github.com/tum-ei-eda/etiss>.
 
         The initial version of this software has been created with the funding support by the German Federal
         Ministry of Education and Research (BMBF) in the project EffektiV under grant 01IS13022.
@@ -93,28 +93,12 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <unordered_set>
+
+class OrcJit;
 
 namespace etiss
 {
-
-/**
-        @brief contains compiled code from LLVMJIT::translate and a execution
-   engine
-*/
-class LLVMLibrary
-{
-  public:
-    LLVMLibrary(llvm::LLVMContext &context, std::unique_ptr<llvm::Module> module);
-    ~LLVMLibrary();
-    /**
-            @brief lookup function name; NOTE: functions only NOT symbols
-    */
-    void *getFunction(std::string name, std::string &error);
-
-  private:
-    llvm::ExecutionEngine *engine_;
-    std::string error_;
-};
 
 class LLVMJIT : public etiss::JIT
 {
@@ -128,7 +112,9 @@ class LLVMJIT : public etiss::JIT
 
   private:
     llvm::LLVMContext context_;
-    clang::CompilerInstance clang_;
+    OrcJit *orcJit_ = nullptr;
+    std::unordered_set<std::string> loadedLibs_;
+
 };
 
 } // namespace etiss

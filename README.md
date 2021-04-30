@@ -36,25 +36,27 @@ ETISS is supported on x86_64 Linux and Windows hosts. Tested compilers include G
   - GCC Compiler >= 5.0
   - Boost >= 1.54
   - Graphviz + Doxygen (For documentation generation)
-  - LLVM + Clang 7
-  (If you want to use LLVM-JIT compiler then you have to setup LLVM and Clang
-   libraries somewhere on the host PC and source it with the environment variable
-   `LLVM_DIR`.)
+  - LLVM + Clang 11 (Please download appropriate pre-built binaries from https://releases.llvm.org/download.html and put them in /opt/)
+
+## LINUX SYSTEM
 
 Packages for Ubuntu 18:
 
-    sudo apt-get install g++ libboost-system-dev libboost-filesystem-dev graphviz doxygen libtinfo-dev zlib1g-dev
-
+    sudo apt-get install g++ libboost-system-dev libboost-filesystem-dev libboost-program-options-dev graphviz doxygen libtinfo-dev zlib1g-dev texinfo
 
 ### Build and Installation
 
-Follow these instructions to quickly build ETISS.
+Follow these instructions to quickly build ETISS. Start in the root directory of ETISS by creating a build directory:
 
 	$ mkdir build_dir
 
 Change to the created directory, e.g.,
 
 	$ cd build_dir
+
+If LLVM-JIT compiler is used, source it with the environment variable:
+
+	$ export LLVM_DIR=/path/to/llvm
 
 Configure the build system, e.g.,
 Replace `` `pwd`/installed`` with your `<etiss_install_path>` if you do not like to install etiss into `build_dir/installed/`. Set up path to cmake if necessary.
@@ -74,6 +76,47 @@ Build the documentation (optional):
 Install the package:
 
 	$ make install
+
+## WINDOWS SYSTEM
+
+Requirements for Windows:
+
+ - Install Visual Studio (2019 community edition). In the installer, select the component "Desktop development with C++". Here, under "Optional" make sure "C++ CMake tools for Windows" is selected.
+ - Install Chocolately software from https://chocolatey.org/install
+
+Packages for Windows:
+
+ - choco install boost-msvc-14.2
+ - choco install make
+ - choco install git
+
+   > NOTE: If developer powershell is not used, please also install the CMake package as follows:
+
+   - choco install cmake --version=3.13.3
+
+### Build and Installation
+
+Follow these instructions to quickly build ETISS. The developer powershell of Visual Studio is recommended. Otherwise the environment PATH variable might have to be set accordingly to locate various tools. Start in the root directory of ETISS by creating a build directory:
+
+	$ mkdir build_dir
+
+Change to the created directory, e.g.,
+
+	$ cd build_dir
+
+Configure the build system:
+
+	$ cmake -DCMAKE_BUILD_TYPE=Release -DETISS_BUILD_MANUAL_DOC=ON -DCMAKE_INSTALL_PREFIX:PATH=X:/install/path ..
+
+Compile the package:
+
+Compile in Release mode or Debug mode by setting $BUILD_TYPE to Release or Debug appropriately.
+
+	$ cmake --build . --config $BUILD_TYPE
+
+Install the package:
+
+	$ cmake --build . --config $BUILD_TYPE --target install
 
 ## Example project to run etiss
 

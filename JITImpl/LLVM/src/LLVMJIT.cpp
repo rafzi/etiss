@@ -6,7 +6,7 @@
 
         Copyright 2018 Infineon Technologies AG
 
-        This file is part of ETISS tool, see <https://gitlab.lrz.de/de-tum-ei-eda-open/etiss>.
+        This file is part of ETISS tool, see <https://github.com/tum-ei-eda/etiss>.
 
         The initial version of this software has been created with the funding support by the German Federal
         Ministry of Education and Research (BMBF) in the project EffektiV under grant 01IS13022.
@@ -43,78 +43,133 @@
 #include "LLVMJIT.h"
 #include "etiss/ETISS.h"
 
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/Orc/CompileUtils.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/IRTransformLayer.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
+#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/ExecutionEngine/Orc/CompileOnDemandLayer.h"
+#include "llvm/ExecutionEngine/Orc/CompileUtils.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "clang/Basic/FileManager.h"
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
+
+#include <vector>
 #include <iostream>
 
 using namespace etiss;
 
 using namespace llvm;
 using namespace clang;
+using namespace llvm::orc;
 
 std::mutex etiss_jit_llvm_init_mu_;
 bool etiss_jit_llvm_init_done_ = false;
 
-LLVMLibrary::LLVMLibrary(llvm::LLVMContext &context, std::unique_ptr<llvm::Module> module) : engine_(0)
+class OrcJit
 {
+  public:
+    OrcJit(llvm::orc::JITTargetMachineBuilder JTMB, llvm::DataLayout DL)
+        : ObjectLayer(ES, []() { return std::make_unique<llvm::SectionMemoryManager>(); })
+        , CompileLayer(ES, ObjectLayer, std::make_unique<llvm::orc::ConcurrentIRCompiler>(std::move(JTMB)))
+        , OptimizeLayer(ES, CompileLayer, optimizeModule)
+        , DL(std::move(DL))
+        , Mangle(ES, this->DL)
+        , Ctx(std::make_unique<llvm::LLVMContext>())
+        , MainJITDylib(ES.createBareJITDylib("<main>"))
+    {
+        MainJITDylib.addGenerator(
+            llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(DL.getGlobalPrefix())));
+    }
 
-    if (module != 0)
+    static llvm::Expected<std::unique_ptr<OrcJit>> Create()
     {
-        // create engine
-        engine_ = EngineBuilder(std::move(module))
-                      .setErrorStr(&error_)
-                      .setOptLevel(CodeGenOpt::Aggressive)
-                      .setRelocationModel(llvm::Reloc::Static)
-                      .create();
-        if (engine_ == 0)
-        {
-            std::cout << "ERROR: LLVM: failed to create execution engine: " << error_ << std::endl;
-            error_ = "Failed to create execution engine: " + error_;
-        }
-        else
-        {
-            // "compile" module for access
-            engine_->finalizeObject();
-        }
-    }
-    else
-    {
-        error_ = "Failed to get module from action";
-    }
-}
-LLVMLibrary::~LLVMLibrary()
-{
-    delete engine_;
-}
+        auto JTMB = llvm::orc::JITTargetMachineBuilder::detectHost();
+        if (!JTMB)
+            return JTMB.takeError();
 
-void *LLVMLibrary::getFunction(std::string name, std::string &error)
-{
-    if (engine_)
+        auto DL = JTMB->getDefaultDataLayoutForTarget();
+        if (!DL)
+            return DL.takeError();
+
+        return std::make_unique<OrcJit>(std::move(*JTMB), std::move(*DL));
+    }
+
+    const llvm::DataLayout &getDataLayout() const { return DL; }
+    llvm::LLVMContext &getContext() { return *Ctx.getContext(); }
+
+    void addModule(std::unique_ptr<llvm::Module> M)
     {
-        // get function decalaration
-        Function *f = engine_->FindFunctionNamed(name.c_str());
-        if (f != 0)
+        llvm::cantFail(OptimizeLayer.add(MainJITDylib, llvm::orc::ThreadSafeModule(std::move(M), Ctx)));
+    }
+
+    llvm::Expected<llvm::JITEvaluatedSymbol> lookup(llvm::StringRef Name)
+    {
+        return ES.lookup({ &MainJITDylib }, Mangle(Name.str()));
+    }
+
+    bool loadLib(const std::string &libName, const std::set<std::string> &libPaths)
+    {
+        for (const auto &libPath : libPaths)
         {
-            // get function pointer
-            void *ret = engine_->getPointerToFunction(f);
-            if (ret != 0)
+            SmallString<128> fullPath;
+            sys::path::append(fullPath, libPath, "lib" + libName + ".so");
+            if (sys::fs::exists(fullPath))
             {
-                return ret;
-            }
-            else
-            {
-                error = "Failed to get function: " + error_;
+                MainJITDylib.addGenerator(llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::Load(fullPath.c_str(), DL.getGlobalPrefix())));
+                return true;
             }
         }
-        else
-        {
-            error = "Failed to find function: " + name;
-        }
+
+        return false;
     }
-    else
+
+    static llvm::orc::ThreadSafeModule optimizeModule(llvm::orc::ThreadSafeModule TSM,
+                                                      const llvm::orc::MaterializationResponsibility &R)
     {
-        error = "no llvm execution engine present";
+        auto lock = TSM.getContext();
+        auto M = TSM.getModuleUnlocked();
+
+        // Create a function pass manager.
+        auto FPM = std::make_unique<llvm::legacy::FunctionPassManager>(M);
+
+        // Add some optimizations.
+        FPM->add(llvm::createInstructionCombiningPass());
+        FPM->add(llvm::createReassociatePass());
+        FPM->add(llvm::createGVNPass());
+        FPM->add(llvm::createCFGSimplificationPass());
+        FPM->doInitialization();
+
+        // Run the optimizations over all functions in the module being added to
+        // the JIT.
+        for (auto &F : *M)
+            FPM->run(F);
+
+        return TSM;
     }
-    return 0;
-}
+
+  private:
+    llvm::orc::ExecutionSession ES;
+    llvm::orc::RTDyldObjectLinkingLayer ObjectLayer;
+    llvm::orc::IRCompileLayer CompileLayer;
+    llvm::orc::IRTransformLayer OptimizeLayer;
+
+    llvm::DataLayout DL;
+    llvm::orc::MangleAndInterner Mangle;
+    llvm::orc::ThreadSafeContext Ctx;
+    llvm::orc::JITDylib &MainJITDylib;
+};
 
 LLVMJIT::LLVMJIT() : JIT("LLVMJIT")
 {
@@ -131,100 +186,109 @@ LLVMJIT::LLVMJIT() : JIT("LLVMJIT")
     }
     etiss_jit_llvm_init_mu_.unlock();
 
-    // create logger
-    DiagnosticOptions *diagOpts = new DiagnosticOptions();
-    TextDiagnosticPrinter *diagPrinter = new TextDiagnosticPrinter(llvm::outs(), diagOpts);
-    clang_.createDiagnostics(diagPrinter);
-
-    // configure compiler target
-    auto pto = std::make_shared<clang::TargetOptions>();
-    pto->Triple = llvm::sys::getDefaultTargetTriple();
-    TargetInfo *pti = TargetInfo::CreateTargetInfo(clang_.getDiagnostics(), pto);
-    clang_.setTarget(pti);
-
-    // initialize compiler parts
-    clang_.createFileManager();
-    clang_.createSourceManager(clang_.getFileManager());
-    clang_.createPreprocessor(clang::TranslationUnitKind::TU_Module);
+    auto orcJit = OrcJit::Create();
+    if (!orcJit)
+        throw std::runtime_error("fail");
+    orcJit_ = (*orcJit).release();
 }
 
-LLVMJIT::~LLVMJIT() {}
+LLVMJIT::~LLVMJIT()
+{
+    delete orcJit_;
+}
 
 void *LLVMJIT::translate(std::string code, std::set<std::string> headerpaths, std::set<std::string> librarypaths,
                          std::set<std::string> libraries, std::string &error, bool debug)
 {
+    clang::CompilerInstance CI;
 
-    void *ret = 0;
-
-    // diagnostics
     DiagnosticOptions *diagOpts = new DiagnosticOptions();
-    TextDiagnosticPrinter *DiagClient = new TextDiagnosticPrinter(llvm::errs(), diagOpts);
-    IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
-    DiagnosticsEngine Diags(DiagID, diagOpts, DiagClient);
+    TextDiagnosticPrinter *diagPrinter = new TextDiagnosticPrinter(llvm::outs(), diagOpts);
+
+    CI.createDiagnostics(diagPrinter);
+    auto pto = std::make_shared<clang::TargetOptions>();
+    pto->Triple = llvm::sys::getDefaultTargetTriple();
+    TargetInfo *pti = TargetInfo::CreateTargetInfo(CI.getDiagnostics(), pto);
+    CI.setTarget(pti);
+    CI.createFileManager();
+    CI.createSourceManager(CI.getFileManager());
+    CI.createPreprocessor(clang::TranslationUnitKind::TU_Module);
 
     // compilation task
-    // NOTE: Every entry of args could only contain one option, the second will be discarded silently!
-    std::vector<const char *> args;
-    std::vector<std::string> args_ref;
-    args.push_back("/etiss_llvm_clang_memory_mapped_file.c");
-    // Print out verbose info of compiler to check configuration
-    // args.push_back("-v");
-    args.push_back("-O3");
-    //	args.push_back("-I/usr/include"); // include  system headers
-    for (auto iter = headerpaths.begin(); iter != headerpaths.end(); iter++)
+    std::vector<std::string> args;
+    if (debug)
     {
-        args_ref.push_back("-I" + *iter);
-        args.push_back(args_ref.back().c_str());
+        args.push_back("-g");
+        args.push_back("-O0");
     }
-    args_ref.push_back("-I" + etiss::jitFiles() + "/clang_stdlib");
-    args.push_back(args_ref.back().c_str());
-    /// TODO: implement method to find/configure standard header path at runtime
-#ifdef CLANG_HEADERS
-#define CLANG_HEADERS_tostring_(X) #X
-#define CLANG_HEADERS_tostring(X) CLANG_HEADERS_tostring_(X)
-    args.push_back("-isystem"); // include as system headers to supress warnings
-    args_ref.push_back(etiss::cfg().get<std::string>("etiss_wd", CLANG_HEADERS_tostring(CLANG_FALLBACK_PATH)) +
-                       CLANG_HEADERS_tostring(CLANG_HEADER_REALTIVE_PATH));
-    args.push_back(args_ref.back().c_str());
-#endif
+    else
+    {
+        args.push_back("-O3");
+    }
+    args.push_back("-std=c99");
+    args.push_back("-isystem" + etiss::jitFiles() + "/clang_stdlib");
+    args.push_back("-isystem/usr/include");
+    for (const auto &headerPath : headerpaths)
+    {
+        args.push_back("-isystem" + headerPath);
+    }
+    args.push_back("/etiss_llvm_clang_memory_mapped_file.c");
+    args.push_back("-isystem/usr/include/x86_64-linux-gnu");
+
+    for (const auto &lib : libraries)
+    {
+        if (loadedLibs_.count(lib) == 0)
+        {
+            if (!orcJit_->loadLib(lib, librarypaths))
+            {
+                error = "could not load library";
+                return 0;
+            }
+            loadedLibs_.insert(lib);
+        }
+    }
 
     // configure compiler call
-    CompilerInvocation::CreateFromArgs(clang_.getInvocation(), &args[0], &args[0] + args.size(), Diags);
+    std::vector<const char *> argsCStr;
+    for (const auto &arg : args)
+    {
+        argsCStr.push_back(arg.c_str());
+    }
+    if (!CompilerInvocation::CreateFromArgs(CI.getInvocation(), argsCStr, CI.getDiagnostics()))
+    {
+        error = "error on parsing args";
+        return 0;
+    }
+
     // input file is mapped to memory area containing the code
     auto buffer = MemoryBuffer::getMemBufferCopy(code, "/etiss_llvm_clang_memory_mapped_file.c");
-    clang_.getSourceManager().overrideFileContents(
-        clang_.getFileManager().getVirtualFile("/etiss_llvm_clang_memory_mapped_file.c", buffer->getBufferSize(), 0),
+    CI.getSourceManager().overrideFileContents(
+        CI.getFileManager().getVirtualFile("/etiss_llvm_clang_memory_mapped_file.c", buffer->getBufferSize(), 0),
         buffer.get(), true);
-    // buffer =
-    // MemoryBuffer::getMemBufferCopy(code,"/etiss_llvm_clang_memory_mapped_file.c");
-    // clang_.getPreprocessorOpts().addRemappedFile("/etiss_llvm_clang_memory_mapped_file.c",
-    // buffer); clang_.createPreprocessor();
 
     // compiler should only output llvm module
-    EmitLLVMOnlyAction *action = new EmitLLVMOnlyAction();
+
+    EmitLLVMOnlyAction action(&orcJit_->getContext());
 
     // compile
-    if (!clang_.ExecuteAction(*action))
+    if (!CI.ExecuteAction(action))
     {
         error = "failed to execute translation action ";
         return 0;
     }
 
-    // load module with mcjit
-    LLVMLibrary *lib =
-        new LLVMLibrary(context_, action->takeModule()); // translfer module ownershif from action to the engine
+    // load module with orcjit
+    orcJit_->addModule(action.takeModule());
 
-    // TODO: check if lib is valid now not later
-
-    ret = (void *)lib;
-
-    return ret;
+    return (void *)1;
 }
+
 void *LLVMJIT::getFunction(void *handle, std::string name, std::string &error)
 {
-    return ((LLVMLibrary *)handle)->getFunction(name, error);
+
+    auto func = orcJit_->lookup(name);
+    if (!func)
+        throw std::runtime_error("fail");
+    return (void *)(*func).getAddress();
 }
-void LLVMJIT::free(void *handle)
-{
-    delete (LLVMLibrary *)handle;
-}
+void LLVMJIT::free(void *handle) {}

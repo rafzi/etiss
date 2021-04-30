@@ -6,7 +6,7 @@
 
         Copyright 2018 Infineon Technologies AG
 
-        This file is part of ETISS tool, see <https://gitlab.lrz.de/de-tum-ei-eda-open/etiss>.
+        This file is part of ETISS tool, see <https://github.com/tum-ei-eda/etiss>.
 
         The initial version of this software has been created with the funding support by the German Federal
         Ministry of Education and Research (BMBF) in the project EffektiV under grant 01IS13022.
@@ -559,7 +559,7 @@ etiss::int32 CPUCore::execute(ETISS_System &_system)
     }
 
     // verify jit
-    if (etiss::cfg().get<bool>("verifyJIT", true))
+    if (etiss::cfg().get<bool>("jit.verify", true))
     {
         if (!verifyJITSizeOf("etiss_int64", sizeof(etiss_int64), jiti.get()))
             return RETURNCODE::JITCOMPILATIONERROR;

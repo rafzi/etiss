@@ -6,7 +6,7 @@
 
         Copyright 2018 Infineon Technologies AG
 
-        This file is part of ETISS tool, see <https://gitlab.lrz.de/de-tum-ei-eda-open/etiss>.
+        This file is part of ETISS tool, see <https://github.com/tum-ei-eda/etiss>.
 
         The initial version of this software has been created with the funding support by the German Federal
         Ministry of Education and Research (BMBF) in the project EffektiV under grant 01IS13022.
@@ -207,8 +207,7 @@ std::set<std::string> listLibraryPrefixes();
  * @attention It is recommended to use etiss::Initializer instead of calling
  * etiss::initialize / etiss::shutdown manually
  */
-void initialize(std::vector<std::string> args);
-
+void initialize(std::vector<std::string>& args);
 /**
  * @brief Get the default JIT implementation.
  *
@@ -338,11 +337,22 @@ class Initializer
         static_assert(std::is_same<const char, argvT>::value || std::is_same<char, argvT>::value,
                       "argv must be of type const char or char");
         std::vector<std::string> args;
-        for (int i = 0; i < argc; i++)
+        for (int i = 1; i < argc; i++)
         {
             args.push_back(std::string(argv[i]));
         }
         toList(args, args_append...);
+        initialize(args);
+    }
+
+    Initializer(std::list<std::string> *files, int argc, const char* argv[])
+    {
+        std::vector<std::string> args;
+        for (int i = 1; i < argc; i++)
+        {
+            args.push_back(std::string(argv[i]));
+        }
+        loadIni(files);
         initialize(args);
     }
 
@@ -395,7 +405,7 @@ class Initializer
         static_assert(std::is_same<const char, argvT>::value || std::is_same<char, argvT>::value,
                       "argv must be of type const char or char");
         std::vector<std::string> args;
-        for (int i = 0; i < argc; i++)
+        for (int i = 1; i < argc; i++)
         {
             args.push_back(std::string(argv[i]));
         }
