@@ -124,17 +124,11 @@ jobs:
         ./run_helper.sh ../SW/riscv/build64/riscv_example
         ./run_helper.sh ../SW/riscv_cpp/build64/riscv_example
 
-    - name: Start SSH session
-      uses: luchihoratiu/debug-via-ssh@main
-      with:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-        SSH_PASS: ${{ secrets.SSH_PASS }}
-        NGROK_REGION: eu
-
-    - name: Test (Windows) 
+    - name: Test (Windows)
+      working-directory: ${{runner.workspace}}/install/examples/bare_etiss_processor/build
       if: matrix.config.name == 'Windows'
       shell: bash
       run: |
         PATH=$PATH:/d/a/etiss/install/lib/
-        VP_EXE="${{runner.workspace}}/install/examples/bare_etiss_processor/build/$BUILD_TYPE/main.exe"
-        ${VP_EXE} --vp.elf_file=${{runner.workspace}}/install/examples/SW/riscv/build/riscv_example --arch.cpu=RISCV --jit.type=TCCJIT --etiss.loglevel=4 -pLogger
+        cd $BUILD_TYPE
+        main.exe --vp.elf_file=../../../SW/riscv/build/riscv_example --arch.cpu=RISCV --jit.type=TCCJIT --etiss.loglevel=4 -pLogger
