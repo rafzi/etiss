@@ -130,7 +130,5 @@ jobs:
       shell: bash
       run: |
         PATH=$PATH:/d/a/etiss/install/lib/
-        echo $BUILD_TYPE
         cd $BUILD_TYPE
-        ls
-        main --vp.elf_file=../../../SW/riscv/build/riscv_example --arch.cpu=RISCV --jit.type=TCCJIT --etiss.loglevel=4 -pLogger
+        ./main.exe --vp.elf_file=../../../SW/riscv/build/riscv_example --arch.cpu=RISCV --jit.type=TCCJIT --etiss.loglevel=4 -pLogger
